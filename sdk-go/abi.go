@@ -18,7 +18,7 @@ var (
 	handler handlerFunc
 )
 
-type handlerFunc func(header, path, body []byte) (code int, res []byte)
+type handlerFunc func(method, path []byte) (code int, res []byte)
 
 //export __http_server
 func __http_server() (res uint32) {
@@ -37,22 +37,29 @@ func setBody(b []byte) {
 	bodyLen = uint32(len(b))
 }
 
-func getBody() []byte {
+func bodyBytes() []byte {
 	return body[:bodyLen]
 }
 
-func getHeader() []byte {
+func setHeader(h []byte) {
+	copy(header[:0], h)
+	headerLen = uint32(len(h))
+}
+
+func headerBytes() []byte {
 	return header[:headerLen]
 }
 
-func getReqHeader() (header, url []byte) {
-	parts := bytes.Split(getHeader(), []byte{' '})
+func getRequestLine() (method, url []byte) {
+	parts := bytes.Split(headerBytes(), []byte{' '})
 	if len(parts) != 2 {
 		resCode = 400
-		setBody([]byte(`Invalid header: ` + string(getHeader())))
+		setBody([]byte(`Invalid request line: ` + string(headerBytes())))
 		return
 	}
-	return parts[0], parts[1]
+	method = parts[0]
+	url = parts[1]
+	return
 }
 
 //export __http_server_handle
@@ -61,17 +68,22 @@ func __http_server_handle() {
 		resCode = 405
 		return
 	}
-	method, path := getReqHeader()
-	code, b := handler(method, path, getBody())
+	method, path := getRequestLine()
+	code, b := handler(method, path)
 	setBody(b)
 	resCode = uint32(code)
 }
 
 //go:wasm-module pantopic/ext-http-server
 //export __http_server_send
-func send(uint64)
+func _send(uint64)
+
+//go:wasm-module pantopic/ext-http-server
+//export __http_server_get_headers
+func _get_headers()
 
 // Fix for lint rule `unusedfunc`
 var _ = __http_server
 var _ = __http_server_handle
-var _ = send
+var _ = _send
+var _ = _get_headers

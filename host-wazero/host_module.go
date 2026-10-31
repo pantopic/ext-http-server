@@ -1,10 +1,12 @@
 package wazero_http_server
 
 import (
+	"bytes"
 	"context"
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/soheilhy/cmux"
@@ -65,6 +67,17 @@ func (h *hostModule) Register(ctx context.Context, r wazero.Runtime) (err error)
 		"__http_server_send": func(ctx context.Context, msg []byte, code int) {
 			get[sendFunc](ctx, ctxKeySend)(ctx, msg, err)
 		},
+		"__http_server_get_headers": func(ctx context.Context, header []byte) {
+			for _, line := range bytes.Lines(header) {
+				parts := bytes.SplitN(line, []byte{':'}, 2)
+				if len(parts) != 2 {
+					continue
+				}
+				name := strings.TrimSpace(string(parts[0]))
+				value := strings.TrimSpace(string(parts[1]))
+				log.Printf("Header: %s=%s", name, value)
+			}
+		},
 	} {
 		switch fn := fn.(type) {
 		case func(context.Context, []byte, int):
@@ -76,6 +89,11 @@ func (h *hostModule) Register(ctx context.Context, r wazero.Runtime) (err error)
 					data = append(data[:0], buf...)
 				}
 				fn(ctx, data, getResCode(mod, meta))
+			})
+		case func(context.Context, []byte):
+			register(name, func(ctx context.Context, mod api.Module, stack []uint64) {
+				meta := get[*meta](ctx, ctxKeyMeta)
+				fn(ctx, getHeaderBytes(mod, meta))
 			})
 		default:
 			log.Panicf("Method signature implementation missing: %#v", fn)
@@ -193,6 +211,10 @@ func headerBuf(m api.Module, meta *meta) []byte {
 func setHeader(m api.Module, meta *meta, header []byte) {
 	copy(headerBuf(m, meta)[:len(header)], header)
 	writeUint32(m, meta.ptrHeaderLen, uint32(len(header)))
+}
+
+func getHeaderBytes(m api.Module, meta *meta) []byte {
+	return read(m, meta.ptrHeader, meta.ptrHeaderLen, meta.ptrHeaderCap)
 }
 
 func getBody(m api.Module, meta *meta) []byte {

@@ -12,7 +12,7 @@ func init() {
 
 func main() {}
 
-func handler(method, path, body []byte) (code int, res []byte) {
+func handler(method, path []byte) (code int, res []byte) {
 	switch string(path) {
 	case "/hello":
 		code = 200
