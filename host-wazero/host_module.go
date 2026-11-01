@@ -77,16 +77,15 @@ func (h *hostModule) Register(ctx context.Context, r wazero.Runtime) (err error)
 		"__http_server_read_body": func(ctx context.Context) []byte {
 			return get[[]byte](ctx, ctxKeyBody)
 		},
-		"__http_server_get_headers": func(ctx context.Context, headers []byte) {
-			for line := range bytes.Lines(headers) {
-				parts := bytes.SplitN(line, []byte{':'}, 2)
-				if len(parts) != 2 {
-					continue
-				}
-				name := strings.TrimSpace(string(parts[0]))
-				value := strings.TrimSpace(string(parts[1]))
-				log.Printf("Header: %s=%s", name, value)
+		"__http_server_get_headers": func(ctx context.Context, headers []byte) (res []byte) {
+			vals := make(map[string]string)
+			for key := range bytes.Lines(headers) {
+				vals[string(key)] = get[*http.Request](ctx, ctxKeyReq).Header.Get(string(key))
 			}
+			for k, v := range vals {
+				res = append(res, []byte(k+":"+v+"\n")...)
+			}
+			return
 		},
 	} {
 		switch fn := fn.(type) {
@@ -100,10 +99,11 @@ func (h *hostModule) Register(ctx context.Context, r wazero.Runtime) (err error)
 				}
 				fn(ctx, data, getHeaderBytes(mod, meta), getResCode(mod, meta))
 			})
-		case func(context.Context, []byte):
+		case func(context.Context, []byte) []byte:
 			register(name, func(ctx context.Context, mod api.Module, stack []uint64) {
+				meta := get[*meta](ctx, ctxKeyMeta)
 				header, _ := mod.Memory().Read(uint32(stack[0]), uint32(stack[1]))
-				fn(ctx, header)
+				setHeader(mod, meta, fn(ctx, header))
 			})
 		case func(context.Context) []byte:
 			register(name, func(ctx context.Context, mod api.Module, stack []uint64) {

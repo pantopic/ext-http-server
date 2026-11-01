@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -134,8 +135,34 @@ func TestHostModule(t *testing.T) {
 						}
 					}
 				})
+				t.Run(`request header`, func(t *testing.T) {
+					res, err := c.Do(&http.Request{
+						URL: &url.URL{
+							Scheme: "http",
+							Host:   fmt.Sprintf(`%s`, addr),
+							Path:   "/request-header",
+						},
+						Header: http.Header{
+							"test": []string{"badonk"},
+						},
+					})
+					if err != nil {
+						t.Fatalf(`%v`, err)
+					}
+					defer res.Body.Close()
+					if res.StatusCode != 200 {
+						t.Fatalf(`Incorrect status code: %d`, res.StatusCode)
+					}
+					b, err := io.ReadAll(res.Body)
+					if err != nil {
+						t.Fatalf(`%v`, err)
+					}
+					if string(b) != "badonk" {
+						t.Fatalf(`Incorrect response body: "%s"`, string(b))
+					}
+				})
 				t.Run(`response header`, func(t *testing.T) {
-					res, err := c.Get(fmt.Sprintf(`http://%s/header`, addr))
+					res, err := c.Get(fmt.Sprintf(`http://%s/response-header`, addr))
 					if err != nil {
 						t.Fatalf(`%v`, err)
 					}

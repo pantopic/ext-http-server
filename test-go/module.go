@@ -28,7 +28,9 @@ func handler(method, path []byte) {
 		http_server.Send(200, http_server.BodyRead(bodyBuf))
 	case "/reflect3":
 		http_server.Send(200, http_server.BodyRead(make([]byte, http_server.BodyLen())))
-	case "/header":
+	case "/request-header":
+		http_server.Send(200, []byte(http_server.GetHeaders("test")["test"]))
+	case "/response-header":
 		http_server.Send(200, []byte("header"), http_server.WithHeaders(map[string]string{"test-key": "test-value"}))
 	default:
 		http_server.Send(404, []byte("not found"))
