@@ -29,8 +29,14 @@ func GetHeaders(names ...string) map[string]string {
 	return res
 }
 
-func Send(code int, body []byte) {
+func Send(code int, body []byte, opts ...Option) {
+	header = header[:0]
+	headerLen = 0
 	resCode = uint32(code)
+	for _, opt := range opts {
+		opt()
+	}
+	headerLen = uint32(len(header))
 	_send(uint32(uintptr(unsafe.Pointer(&body[0]))), uint32(len(body)))
 }
 

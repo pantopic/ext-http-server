@@ -134,6 +134,26 @@ func TestHostModule(t *testing.T) {
 						}
 					}
 				})
+				t.Run(`response header`, func(t *testing.T) {
+					res, err := c.Get(fmt.Sprintf(`http://%s/header`, addr))
+					if err != nil {
+						t.Fatalf(`%v`, err)
+					}
+					defer res.Body.Close()
+					if res.StatusCode != 200 {
+						t.Fatalf(`Incorrect status code: %d`, res.StatusCode)
+					}
+					b, err := io.ReadAll(res.Body)
+					if err != nil {
+						t.Fatalf(`%v`, err)
+					}
+					if string(b) != "header" {
+						t.Fatalf(`Incorrect response body: "%s"`, string(b))
+					}
+					if res.Header.Get("test-key") != "test-value" {
+						t.Fatalf(`Incorrect response header: %s`, res.Header.Get("test-key"))
+					}
+				})
 			})
 		})
 	}

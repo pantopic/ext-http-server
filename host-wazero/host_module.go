@@ -60,8 +60,17 @@ func (h *hostModule) Register(ctx context.Context, r wazero.Runtime) (err error)
 		builder = builder.NewFunctionBuilder().WithGoModuleFunction(api.GoModuleFunc(fn), []api.ValueType{api.ValueTypeI32, api.ValueTypeI32}, nil).Export(name)
 	}
 	for name, fn := range map[string]any{
-		"__http_server_send": func(ctx context.Context, body []byte, code int) {
+		"__http_server_send": func(ctx context.Context, body, header []byte, code int) {
 			w := get[http.ResponseWriter](ctx, ctxKeyResp)
+			for _, line := range strings.Split(string(header), "\n") {
+				parts := strings.SplitN(line, ":", 2)
+				if len(parts) != 2 {
+					continue
+				}
+				name := strings.TrimSpace(parts[0])
+				value := strings.TrimSpace(parts[1])
+				w.Header().Set(name, value)
+			}
 			w.WriteHeader(code)
 			w.Write(body)
 		},
@@ -70,7 +79,6 @@ func (h *hostModule) Register(ctx context.Context, r wazero.Runtime) (err error)
 		},
 		"__http_server_get_headers": func(ctx context.Context, headers []byte) {
 			for line := range bytes.Lines(headers) {
-
 				parts := bytes.SplitN(line, []byte{':'}, 2)
 				if len(parts) != 2 {
 					continue
@@ -82,7 +90,7 @@ func (h *hostModule) Register(ctx context.Context, r wazero.Runtime) (err error)
 		},
 	} {
 		switch fn := fn.(type) {
-		case func(context.Context, []byte, int):
+		case func(context.Context, []byte, []byte, int):
 			register(name, func(ctx context.Context, mod api.Module, stack []uint64) {
 				meta := get[*meta](ctx, ctxKeyMeta)
 				var data []byte
@@ -90,7 +98,7 @@ func (h *hostModule) Register(ctx context.Context, r wazero.Runtime) (err error)
 					buf, _ := mod.Memory().Read(uint32(stack[0]), uint32(stack[1]))
 					data = append(data[:0], buf...)
 				}
-				fn(ctx, data, getResCode(mod, meta))
+				fn(ctx, data, getHeaderBytes(mod, meta), getResCode(mod, meta))
 			})
 		case func(context.Context, []byte):
 			register(name, func(ctx context.Context, mod api.Module, stack []uint64) {

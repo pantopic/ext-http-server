@@ -7,3 +7,11 @@ func WithHandler(h handlerFunc) Option {
 		handler = h
 	}
 }
+
+func WithHeaders(m map[string]string) Option {
+	return func() {
+		for k, v := range m {
+			header = append(header, []byte(k+": "+v+"\n")...)
+		}
+	}
+}
