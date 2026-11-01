@@ -6,15 +6,13 @@ import (
 	"net/http"
 
 	"github.com/tetratelabs/wazero/api"
-	"google.golang.org/grpc"
 
 	"github.com/pantopic/wazero-pool"
 )
 
 type httpHandler struct {
-	ctx        context.Context
-	grpcServer *grpc.Server
-	pool       wazeropool.Instance
+	ctx  context.Context
+	pool wazeropool.Instance
 }
 
 func NewHttpHandler(ctx context.Context, pool wazeropool.Instance) *httpHandler {
@@ -34,12 +32,11 @@ func (h *httpHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		meta := get[*meta](h.ctx, ctxKeyMeta)
 		body, _ := io.ReadAll(r.Body)
 		setHeader(mod, meta, []byte(r.Method+" "+r.URL.Path))
-		setBody(mod, meta, body)
+		writeUint32(mod, meta.ptrBodyLen, uint32(len(body)))
 		setResCode(mod, meta, 200)
-		fn.Call(h.ctx)
-		if code := int(getResCode(mod, meta)); code != 0 {
-			w.WriteHeader(code)
-		}
-		w.Write(getBodyCopy(mod, meta))
+		ctx := context.WithValue(h.ctx, ctxKeyReq, r)
+		ctx = context.WithValue(ctx, ctxKeyResp, w)
+		ctx = context.WithValue(ctx, ctxKeyBody, body)
+		fn.Call(ctx)
 	})
 }

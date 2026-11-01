@@ -1,6 +1,7 @@
 package wazero_http_server
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"fmt"
@@ -80,6 +81,23 @@ func TestHostModule(t *testing.T) {
 						t.Fatalf(`Incorrect response body: %s`, string(b))
 					}
 				})
+				t.Run(`404`, func(t *testing.T) {
+					res, err := c.Get(fmt.Sprintf(`http://%s/nonsense`, addr))
+					if err != nil {
+						t.Fatalf(`%v`, err)
+					}
+					defer res.Body.Close()
+					if res.StatusCode != 404 {
+						t.Fatalf(`Incorrect status code: %d`, res.StatusCode)
+					}
+					b, err := io.ReadAll(res.Body)
+					if err != nil {
+						t.Fatalf(`%v`, err)
+					}
+					if string(b) != "not found" {
+						t.Fatalf(`Incorrect response body: %s`, string(b))
+					}
+				})
 				t.Run(`410`, func(t *testing.T) {
 					res, err := c.Get(fmt.Sprintf(`http://%s/goodbye`, addr))
 					if err != nil {
@@ -95,6 +113,25 @@ func TestHostModule(t *testing.T) {
 					}
 					if string(b) != "world" {
 						t.Fatalf(`Incorrect response body: %s`, string(b))
+					}
+				})
+				t.Run(`body`, func(t *testing.T) {
+					for _, path := range []string{"reflect", "reflect2", "reflect3"} {
+						res, err := c.Post(fmt.Sprintf(`http://%s/%s`, addr, path), `text/plain`, bytes.NewReader([]byte("test-"+path)))
+						if err != nil {
+							t.Fatalf(`%v`, err)
+						}
+						defer res.Body.Close()
+						if res.StatusCode != 200 {
+							t.Fatalf(`Incorrect status code: %d`, res.StatusCode)
+						}
+						b, err := io.ReadAll(res.Body)
+						if err != nil {
+							t.Fatalf(`%v`, err)
+						}
+						if string(b) != "test-"+path {
+							t.Fatalf(`Incorrect response body: "%s"`, string(b))
+						}
 					}
 				})
 			})

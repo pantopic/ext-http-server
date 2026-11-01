@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/soheilhy/cmux"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
 
@@ -20,32 +19,29 @@ const Name = "pantopic/ext-http-server"
 
 var (
 	ctxKeyMeta = Name + `/meta`
-	ctxKeyNext = Name + `/next`
-	ctxKeySend = Name + `/send`
+	ctxKeyReq  = Name + `/req`
+	ctxKeyResp = Name + `/resp`
+	ctxKeyBody = Name + `/body`
 )
 
 type meta struct {
 	ptrHeaderCap uint32
 	ptrHeaderLen uint32
 	ptrHeader    uint32
-	ptrBodyCap   uint32
 	ptrBodyLen   uint32
-	ptrBody      uint32
 	ptrResCode   uint32
 }
 
 type hostModule struct {
 	sync.RWMutex
 
-	module api.Module
-	mux    map[net.Listener]cmux.CMux
+	module  api.Module
+	servers map[net.Listener]*http.Server
 }
-
-type sendFunc = func(ctx context.Context, msg []byte, err error)
 
 func New(opts ...Option) (h *hostModule) {
 	h = &hostModule{
-		mux: make(map[net.Listener]cmux.CMux),
+		servers: make(map[net.Listener]*http.Server),
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -61,14 +57,20 @@ func (h *hostModule) Name() string {
 func (h *hostModule) Register(ctx context.Context, r wazero.Runtime) (err error) {
 	builder := r.NewHostModuleBuilder(Name)
 	register := func(name string, fn func(ctx context.Context, m api.Module, stack []uint64)) {
-		builder = builder.NewFunctionBuilder().WithGoModuleFunction(api.GoModuleFunc(fn), []api.ValueType{api.ValueTypeI64}, nil).Export(name)
+		builder = builder.NewFunctionBuilder().WithGoModuleFunction(api.GoModuleFunc(fn), []api.ValueType{api.ValueTypeI32, api.ValueTypeI32}, nil).Export(name)
 	}
 	for name, fn := range map[string]any{
-		"__http_server_send": func(ctx context.Context, msg []byte, code int) {
-			get[sendFunc](ctx, ctxKeySend)(ctx, msg, err)
+		"__http_server_send": func(ctx context.Context, body []byte, code int) {
+			w := get[http.ResponseWriter](ctx, ctxKeyResp)
+			w.WriteHeader(code)
+			w.Write(body)
 		},
-		"__http_server_get_headers": func(ctx context.Context, header []byte) {
-			for _, line := range bytes.Lines(header) {
+		"__http_server_read_body": func(ctx context.Context) []byte {
+			return get[[]byte](ctx, ctxKeyBody)
+		},
+		"__http_server_get_headers": func(ctx context.Context, headers []byte) {
+			for line := range bytes.Lines(headers) {
+
 				parts := bytes.SplitN(line, []byte{':'}, 2)
 				if len(parts) != 2 {
 					continue
@@ -85,15 +87,19 @@ func (h *hostModule) Register(ctx context.Context, r wazero.Runtime) (err error)
 				meta := get[*meta](ctx, ctxKeyMeta)
 				var data []byte
 				if uint32(stack[0]) > 0 {
-					buf, _ := mod.Memory().Read(uint32(stack[0]>>32), uint32(stack[0]))
+					buf, _ := mod.Memory().Read(uint32(stack[0]), uint32(stack[1]))
 					data = append(data[:0], buf...)
 				}
 				fn(ctx, data, getResCode(mod, meta))
 			})
 		case func(context.Context, []byte):
 			register(name, func(ctx context.Context, mod api.Module, stack []uint64) {
-				meta := get[*meta](ctx, ctxKeyMeta)
-				fn(ctx, getHeaderBytes(mod, meta))
+				header, _ := mod.Memory().Read(uint32(stack[0]), uint32(stack[1]))
+				fn(ctx, header)
+			})
+		case func(context.Context) []byte:
+			register(name, func(ctx context.Context, mod api.Module, stack []uint64) {
+				mod.Memory().Write(uint32(stack[0]), fn(ctx))
 			})
 		default:
 			log.Panicf("Method signature implementation missing: %#v", fn)
@@ -119,9 +125,7 @@ func (h *hostModule) InitContext(ctx context.Context, m api.Module) (context.Con
 		&meta.ptrHeaderCap,
 		&meta.ptrHeaderLen,
 		&meta.ptrHeader,
-		&meta.ptrBodyCap,
 		&meta.ptrBodyLen,
-		&meta.ptrBody,
 		&meta.ptrResCode,
 	} {
 		*v = readUint32(m, ptr+uint32(4*i))
@@ -133,11 +137,11 @@ func (h *hostModule) InitContext(ctx context.Context, m api.Module) (context.Con
 func (h *hostModule) ContextCopier(dst, src context.Context) context.Context {
 	if v := src.Value(ctxKeyMeta); v != nil {
 		dst = context.WithValue(dst, ctxKeyMeta, v.(*meta))
-		if v := src.Value(ctxKeyNext); v != nil {
-			dst = context.WithValue(dst, ctxKeyNext, v.(chan []byte))
+		if v := src.Value(ctxKeyReq); v != nil {
+			dst = context.WithValue(dst, ctxKeyReq, v.(*http.Request))
 		}
-		if v := src.Value(ctxKeySend); v != nil {
-			dst = context.WithValue(dst, ctxKeySend, v.(sendFunc))
+		if v := src.Value(ctxKeyResp); v != nil {
+			dst = context.WithValue(dst, ctxKeyResp, v.(http.ResponseWriter))
 		}
 	}
 	return dst
@@ -148,36 +152,29 @@ func (h *hostModule) ServiceType() string {
 }
 
 func (h *hostModule) ServerStart(ctx context.Context, lis net.Listener, tlsCrt, tlsKey string, pool wazeropool.Instance, ctxCopy ...ContextCopier) (err error) {
-	m := cmux.New(lis)
-	httpListener := m.Match(cmux.Any())
 	httpServer := &http.Server{
 		Handler: NewHttpHandler(ctx, pool),
 	}
 	go func() {
 		if tlsCrt != "" && tlsKey != "" {
-			if err = httpServer.ServeTLS(httpListener, tlsCrt, tlsKey); err != nil {
+			if err = httpServer.ServeTLS(lis, tlsCrt, tlsKey); err != nil {
 				panic(err)
 			}
 		} else {
-			if err = httpServer.Serve(httpListener); err != nil {
+			if err = httpServer.Serve(lis); err != nil {
 				panic(err)
 			}
 		}
-		if err = httpServer.Serve(httpListener); err != nil {
+		if err = httpServer.Serve(lis); err != nil {
 			panic(err)
 		}
 	}()
-	go func() {
-		if err := m.Serve(); err != nil {
-			panic(err)
-		}
-	}()
-	h.mux[lis] = m
+	h.servers[lis] = httpServer
 	return
 }
 
 func (h *hostModule) ServerStop(ctx context.Context, lis net.Listener) (err error) {
-	m, ok := h.mux[lis]
+	m, ok := h.servers[lis]
 	if !ok {
 		return
 	}
@@ -217,29 +214,10 @@ func getHeaderBytes(m api.Module, meta *meta) []byte {
 	return read(m, meta.ptrHeader, meta.ptrHeaderLen, meta.ptrHeaderCap)
 }
 
-func getBody(m api.Module, meta *meta) []byte {
-	return read(m, meta.ptrBody, meta.ptrBodyLen, meta.ptrBodyCap)
-}
-
-func getBodyCopy(m api.Module, meta *meta) []byte {
-	return append([]byte(nil), getBody(m, meta)...)
-}
-
-func bodyBuf(m api.Module, meta *meta) []byte {
-	return read(m, meta.ptrBody, 0, meta.ptrBodyCap)
-}
-
-func setBody(m api.Module, meta *meta, msg []byte) error {
-	buf := bodyBuf(m, meta)
-	if len(msg) > cap(buf) {
-		writeUint32(m, meta.ptrBodyLen, 0)
-		return ErrRequestTooLarge
-	}
-	copy(buf[:len(msg)], msg)
+func setBodyLen(m api.Module, meta *meta, msg []byte) error {
 	writeUint32(m, meta.ptrBodyLen, uint32(len(msg)))
 	return nil
 }
-
 func read(m api.Module, ptr, ptrLen, ptrCap uint32) (buf []byte) {
 	buf, ok := m.Memory().Read(ptr, readUint32(m, ptrCap))
 	if !ok {
