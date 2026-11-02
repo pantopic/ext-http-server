@@ -44,7 +44,7 @@ func BodyRead(buf []byte) []byte {
 	if buf == nil {
 		buf = make([]byte, int(bodyLen))
 	}
-	_read_body(uint32(uintptr(unsafe.Pointer(&buf[0]))), uint32(len(buf)))
+	_read_body(uint32(uintptr(unsafe.Pointer(&buf[0]))), uint32(cap(buf)))
 	return buf[:int(bodyLen)]
 }
 
