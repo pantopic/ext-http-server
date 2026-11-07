@@ -22,6 +22,7 @@ var (
 	ctxKeyReq  = Name + `/req`
 	ctxKeyResp = Name + `/resp`
 	ctxKeyBody = Name + `/body`
+	ctxKeyDone = Name + `/done`
 )
 
 type meta struct {
@@ -73,6 +74,7 @@ func (h *hostModule) Register(ctx context.Context, r wazero.Runtime) (err error)
 			}
 			w.WriteHeader(code)
 			w.Write(body)
+			get[func()](ctx, ctxKeyDone)()
 		},
 		"__http_server_read_body": func(ctx context.Context) []byte {
 			return get[[]byte](ctx, ctxKeyBody)
@@ -93,7 +95,7 @@ func (h *hostModule) Register(ctx context.Context, r wazero.Runtime) (err error)
 			register(name, func(ctx context.Context, mod api.Module, stack []uint64) {
 				meta := get[*meta](ctx, ctxKeyMeta)
 				var data []byte
-				if uint32(stack[0]) > 0 {
+				if uint32(stack[1]) > 0 {
 					buf, _ := mod.Memory().Read(uint32(stack[0]), uint32(stack[1]))
 					data = append(data[:0], buf...)
 				}
@@ -161,7 +163,7 @@ func (h *hostModule) ServiceType() string {
 
 func (h *hostModule) ServerStart(ctx context.Context, lis net.Listener, tlsCrt, tlsKey string, pool wazeropool.Instance, ctxCopy ...ContextCopier) (err error) {
 	httpServer := &http.Server{
-		Handler: NewHttpHandler(ctx, pool),
+		Handler: NewHttpHandler(ctx, pool, ctxCopy),
 	}
 	go func() {
 		if tlsCrt != "" && tlsKey != "" {

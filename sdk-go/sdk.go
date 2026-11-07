@@ -37,7 +37,11 @@ func Send(code int, body []byte, opts ...Option) {
 		opt()
 	}
 	headerLen = uint32(len(header))
-	_send(uint32(uintptr(unsafe.Pointer(&body[0]))), uint32(len(body)))
+	var ptr uintptr
+	if len(body) > 0 {
+		ptr = uintptr(unsafe.Pointer(&body[0]))
+	}
+	_send(uint32(ptr), uint32(len(body)))
 }
 
 func BodyRead(buf []byte) []byte {
