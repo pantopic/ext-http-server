@@ -12,6 +12,7 @@ import (
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
 
+	"github.com/pantopic/cluster/iface"
 	"github.com/pantopic/wazero-pool"
 )
 
@@ -38,6 +39,8 @@ type hostModule struct {
 
 	servers map[net.Listener]*http.Server
 }
+
+var _ pantopic.ServiceProvider = (*hostModule)(nil)
 
 func New(opts ...Option) (h *hostModule) {
 	h = &hostModule{
@@ -167,15 +170,16 @@ func (h *hostModule) ServerStart(ctx context.Context, lis net.Listener, tlsCrt, 
 	go func() {
 		if tlsCrt != "" && tlsKey != "" {
 			if err = httpServer.ServeTLS(lis, tlsCrt, tlsKey); err != nil {
-				panic(err)
+				if err != http.ErrServerClosed {
+					panic(err)
+				}
 			}
 		} else {
 			if err = httpServer.Serve(lis); err != nil {
-				panic(err)
+				if err != http.ErrServerClosed {
+					panic(err)
+				}
 			}
-		}
-		if err = httpServer.Serve(lis); err != nil {
-			panic(err)
 		}
 	}()
 	h.servers[lis] = httpServer
@@ -188,6 +192,11 @@ func (h *hostModule) ServerStop(ctx context.Context, lis net.Listener) (err erro
 		return
 	}
 	m.Close()
+	return
+}
+
+func (h *hostModule) ServerUpdate(ctx context.Context, pool wazeropool.Instance, ctxCopy ...ContextCopier) (err error) {
+
 	return
 }
 
